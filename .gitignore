@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+.env.*
+*.env
+*secret*
+*credentials*
+
+# Gemini / API keys
+*api_key*
+*apikey*
+
+# Runtime outputs
+adaptive_outputs/streamlit_sessions/
+adaptive_outputs/feedback/client_sessions.json
+
+# Temporary / editor files
+*.swp
+*.swo
+*.save
+.DS_Store
+
+# Logs
+*.log
+
+# Local test caches
+.pytest_cache/
+.mypy_cache/
+
+# Local test datasets
+my_test/
+my_test_small/
+my_test_context/
+
+# Generated diagnostics
+diagnostic_output/
+
+# Generated outputs and experiments
+adaptive_outputs/*
+!adaptive_outputs/.gitkeep
+
+# Metrics/results generated locally
+metric_result/*
+!metric_result/.gitkeep
+
+# Temporary local files
+wsl
+
+# Empty numeric artifacts
+0.*
+
+# Generated production outputs
+production/output/

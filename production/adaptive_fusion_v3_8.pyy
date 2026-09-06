@@ -1,0 +1,1103 @@
+import os
+import glob
+import cv2
+import numpy as np
+
+
+# ============================================================
+# ADAPTIVE HDR FUSION V3.8
+#
+# NORMAL EXPOSURE DEPTH PRESERVATION
+#
+# Goal:
+# - Preserve V3.3 brightness
+# - Keep normal image as main anchor
+# - Prevent excessive shadow lifting
+# - Protect medium tones and natural depth
+# - Use overexposed image only in true dark shadows
+# - Preserve color and white balance
+# ============================================================
+
+
+# ============================================================
+# IMAGE UTILITIES
+# ============================================================
+
+def read_image(path):
+
+    image = cv2.imread(
+        path,
+        cv2.IMREAD_COLOR
+    )
+
+    if image is None:
+        raise FileNotFoundError(
+            f"Could not read image: {path}"
+        )
+
+    image = cv2.cvtColor(
+        image,
+        cv2.COLOR_BGR2RGB
+    )
+
+    image = image.astype(np.float32) / 255.0
+
+    return image
+
+
+# ============================================================
+# AUTOMATIC IMAGE FINDER
+# ============================================================
+
+def find_image(folder, candidates):
+
+    for name in candidates:
+
+        path = os.path.join(
+            folder,
+            name
+        )
+
+        if os.path.isfile(path):
+            return path
+
+    # Case-insensitive fallback
+    files = []
+
+    for pattern in [
+        "*.jpg",
+        "*.JPG",
+        "*.jpeg",
+        "*.JPEG",
+        "*.png",
+        "*.PNG"
+    ]:
+
+        files.extend(
+            glob.glob(
+                os.path.join(
+                    folder,
+                    pattern
+                )
+            )
+        )
+
+    lower_map = {
+        os.path.basename(f).lower(): f
+        for f in files
+    }
+
+    for name in candidates:
+
+        key = name.lower()
+
+        if key in lower_map:
+            return lower_map[key]
+
+    raise FileNotFoundError(
+        f"\nCould not find image in:\n{folder}\n\n"
+        f"Tried:\n{candidates}"
+    )
+
+
+# ============================================================
+# SMOOTHSTEP
+# ============================================================
+
+def smoothstep(x, edge0, edge1):
+
+    if edge1 <= edge0:
+        return np.zeros_like(
+            x,
+            dtype=np.float32
+        )
+
+    t = np.clip(
+        (x - edge0) / (edge1 - edge0),
+        0.0,
+        1.0
+    )
+
+    return (
+        t * t * (3.0 - 2.0 * t)
+    ).astype(np.float32)
+
+
+# ============================================================
+# LUMINANCE
+# ============================================================
+
+def luminance(image):
+
+    return (
+        0.2126 * image[:, :, 0] +
+        0.7152 * image[:, :, 1] +
+        0.0722 * image[:, :, 2]
+    )
+
+
+# ============================================================
+# EXPOSURE QUALITY
+#
+# Highest weight around medium exposure.
+# ============================================================
+
+def exposure_quality(lum):
+
+    quality = 1.0 - np.abs(
+        lum - 0.50
+    ) / 0.50
+
+    quality = np.clip(
+        quality,
+        0.0,
+        1.0
+    )
+
+    return quality.astype(np.float32)
+
+
+# ============================================================
+# IMAGE ALIGNMENT
+#
+# Align under and over exposures to normal exposure.
+# ============================================================
+
+def align_to_reference(image, reference):
+
+    gray_image = cv2.cvtColor(
+        np.uint8(
+            np.clip(image, 0, 1) * 255
+        ),
+        cv2.COLOR_RGB2GRAY
+    )
+
+    gray_reference = cv2.cvtColor(
+        np.uint8(
+            np.clip(reference, 0, 1) * 255
+        ),
+        cv2.COLOR_RGB2GRAY
+    )
+
+    try:
+
+        warp_matrix = np.eye(
+            2,
+            3,
+            dtype=np.float32
+        )
+
+        criteria = (
+            cv2.TERM_CRITERIA_EPS |
+            cv2.TERM_CRITERIA_COUNT,
+            100,
+            1e-6
+        )
+
+        _, warp_matrix = cv2.findTransformECC(
+            gray_reference,
+            gray_image,
+            warp_matrix,
+            cv2.MOTION_EUCLIDEAN,
+            criteria
+        )
+
+        aligned = cv2.warpAffine(
+            image,
+            warp_matrix,
+            (
+                reference.shape[1],
+                reference.shape[0]
+            ),
+            flags=(
+                cv2.INTER_LINEAR |
+                cv2.WARP_INVERSE_MAP
+            ),
+            borderMode=cv2.BORDER_REFLECT
+        )
+
+        print(
+            "Alignment successful"
+        )
+
+        return aligned
+
+    except cv2.error:
+
+        print(
+            "Alignment skipped - using original image"
+        )
+
+        return image
+
+
+# ============================================================
+# SAVE WEIGHT MAP
+# ============================================================
+
+def save_map(path, data):
+
+    data = np.clip(
+        data,
+        0.0,
+        1.0
+    )
+
+    image = np.uint8(
+        data * 255.0
+    )
+
+    cv2.imwrite(
+        path,
+        image
+    )
+
+
+# ============================================================
+# LOCAL DETAIL / CONTRAST MAP
+#
+# Used only to protect depth.
+# Does NOT blur the image.
+# ============================================================
+
+def local_detail_map(lum):
+
+    small = cv2.GaussianBlur(
+        lum,
+        (0, 0),
+        3
+    )
+
+    detail = np.abs(
+        lum - small
+    )
+
+    detail = cv2.GaussianBlur(
+        detail,
+        (0, 0),
+        2
+    )
+
+    max_value = np.percentile(
+        detail,
+        99
+    )
+
+    if max_value < 1e-6:
+        max_value = 1e-6
+
+    detail = detail / max_value
+
+    detail = np.clip(
+        detail,
+        0.0,
+        1.0
+    )
+
+    return detail.astype(np.float32)
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    print()
+    print("====================================")
+    print("ADAPTIVE HDR FUSION V3.8")
+    print("NORMAL DEPTH PRESERVATION")
+    print("CONTROLLED SHADOW RECOVERY")
+    print("====================================")
+    print()
+
+
+    # ========================================================
+    # INPUT DIRECTORY
+    # ========================================================
+
+    input_dir = (
+        "/home/prthick/FreeMEF/"
+        "my_test/scene005"
+    )
+
+
+    # ========================================================
+    # OUTPUT DIRECTORY
+    # ========================================================
+
+    output_dir = (
+        "/home/prthick/FreeMEF/"
+        "production/output/"
+        "adaptive_fusion_v3_8"
+    )
+
+    os.makedirs(
+        output_dir,
+        exist_ok=True
+    )
+
+
+    # ========================================================
+    # FIND UNDEREXPOSED IMAGE
+    # ========================================================
+
+    under_path = find_image(
+        input_dir,
+        [
+            "01_under.JPG",
+            "01_under.jpg",
+            "under.JPG",
+            "under.jpg",
+            "01_under.PNG",
+            "01_under.png"
+        ]
+    )
+
+
+    # ========================================================
+    # FIND NORMAL IMAGE
+    # ========================================================
+
+    normal_path = find_image(
+        input_dir,
+        [
+            "02_normal.JPG",
+            "02_normal.jpg",
+            "normal.JPG",
+            "normal.jpg",
+            "02_normal.PNG",
+            "02_normal.png"
+        ]
+    )
+
+
+    # ========================================================
+    # FIND OVEREXPOSED IMAGE
+    # ========================================================
+
+    over_path = find_image(
+        input_dir,
+        [
+            "03_over.JPG",
+            "03_over.jpg",
+            "over.JPG",
+            "over.jpg",
+            "03_over.PNG",
+            "03_over.png"
+        ]
+    )
+
+
+    print("Under exposure:")
+    print(under_path)
+
+    print()
+    print("Normal exposure:")
+    print(normal_path)
+
+    print()
+    print("Over exposure:")
+    print(over_path)
+
+    print()
+
+
+    # ========================================================
+    # READ IMAGES
+    # ========================================================
+
+    under = read_image(
+        under_path
+    )
+
+    normal = read_image(
+        normal_path
+    )
+
+    over = read_image(
+        over_path
+    )
+
+
+    # ========================================================
+    # RESIZE IF NECESSARY
+    # ========================================================
+
+    height = normal.shape[0]
+    width = normal.shape[1]
+
+    if (
+        under.shape[0] != height or
+        under.shape[1] != width
+    ):
+
+        under = cv2.resize(
+            under,
+            (width, height),
+            interpolation=cv2.INTER_LINEAR
+        )
+
+    if (
+        over.shape[0] != height or
+        over.shape[1] != width
+    ):
+
+        over = cv2.resize(
+            over,
+            (width, height),
+            interpolation=cv2.INTER_LINEAR
+        )
+
+
+    # ========================================================
+    # ALIGN EXPOSURES TO NORMAL
+    # ========================================================
+
+    print()
+    print("Aligning exposures...")
+    print()
+
+    under = align_to_reference(
+        under,
+        normal
+    )
+
+    over = align_to_reference(
+        over,
+        normal
+    )
+
+
+    # ========================================================
+    # LUMINANCE
+    # ========================================================
+
+    lum_under = luminance(
+        under
+    )
+
+    lum_normal = luminance(
+        normal
+    )
+
+    lum_over = luminance(
+        over
+    )
+
+
+    # ========================================================
+    # HIGHLIGHT MASK
+    #
+    # Only use underexposed image
+    # for genuinely bright areas.
+    # ========================================================
+
+    highlight_mask = smoothstep(
+        lum_normal,
+        0.60,
+        0.85
+    )
+
+
+    # ========================================================
+    # TRUE SHADOW MASK
+    #
+    # IMPORTANT FIX:
+    #
+    # Previous version allowed shadow recovery
+    # too far into medium tones.
+    #
+    # Now recovery strongly affects:
+    # 0.00 - 0.28
+    #
+    # It fades out by:
+    # ~0.38
+    #
+    # This preserves normal image depth.
+    # ========================================================
+
+    shadow_mask = (
+        1.0 -
+        smoothstep(
+            lum_normal,
+            0.14,
+            0.38
+        )
+    )
+
+
+    # ========================================================
+    # DEEP SHADOW MASK
+    #
+    # Strong recovery only in genuinely
+    # dark areas.
+    # ========================================================
+
+    deep_shadow_mask = (
+        1.0 -
+        smoothstep(
+            lum_normal,
+            0.04,
+            0.24
+        )
+    )
+
+
+    # ========================================================
+    # MEDIUM TONE PROTECTION
+    #
+    # This is the most important correction.
+    #
+    # Medium tones approximately 0.28-0.70
+    # should remain dominated by the normal image.
+    # ========================================================
+
+    medium_start = smoothstep(
+        lum_normal,
+        0.22,
+        0.40
+    )
+
+    medium_end = (
+        1.0 -
+        smoothstep(
+            lum_normal,
+            0.62,
+            0.82
+        )
+    )
+
+    medium_mask = (
+        medium_start *
+        medium_end
+    )
+
+    medium_mask = np.clip(
+        medium_mask,
+        0.0,
+        1.0
+    )
+
+
+    # ========================================================
+    # CHECK WHETHER OVER IMAGE HAS
+    # USABLE DETAIL
+    # ========================================================
+
+    over_detail_mask = smoothstep(
+        lum_over,
+        0.03,
+        0.14
+    )
+
+
+    # ========================================================
+    # CONTROLLED SHADOW RECOVERY
+    #
+    # Deep shadows receive recovery.
+    # Normal shadows receive less.
+    # Medium tones are strongly protected.
+    # ========================================================
+
+    shadow_recovery_mask = (
+
+        (
+            0.75 * deep_shadow_mask +
+            0.25 * shadow_mask
+        )
+
+        *
+
+        over_detail_mask
+
+        *
+
+        (
+            1.0 -
+            0.92 * medium_mask
+        )
+    )
+
+
+    shadow_recovery_mask = np.clip(
+        shadow_recovery_mask,
+        0.0,
+        1.0
+    )
+
+
+    # ========================================================
+    # MASK SMOOTHING
+    #
+    # ONLY MASKS ARE SMOOTHED.
+    # IMAGE PIXELS ARE NOT BLURRED.
+    # ========================================================
+
+    highlight_mask = cv2.GaussianBlur(
+        highlight_mask.astype(np.float32),
+        (0, 0),
+        10
+    )
+
+    shadow_mask = cv2.GaussianBlur(
+        shadow_mask.astype(np.float32),
+        (0, 0),
+        10
+    )
+
+    deep_shadow_mask = cv2.GaussianBlur(
+        deep_shadow_mask.astype(np.float32),
+        (0, 0),
+        12
+    )
+
+    medium_mask = cv2.GaussianBlur(
+        medium_mask.astype(np.float32),
+        (0, 0),
+        10
+    )
+
+    shadow_recovery_mask = cv2.GaussianBlur(
+        shadow_recovery_mask.astype(np.float32),
+        (0, 0),
+        12
+    )
+
+
+    # ========================================================
+    # EXPOSURE QUALITY
+    # ========================================================
+
+    q_under = exposure_quality(
+        lum_under
+    )
+
+    q_normal = exposure_quality(
+        lum_normal
+    )
+
+    q_over = exposure_quality(
+        lum_over
+    )
+
+
+    # ========================================================
+    # DETAIL MAP
+    #
+    # Normal image detail is used to
+    # preserve local depth and structure.
+    # ========================================================
+
+    normal_detail = local_detail_map(
+        lum_normal
+    )
+
+
+    # ========================================================
+    # UNDEREXPOSED WEIGHT
+    #
+    # Mainly highlight recovery.
+    # ========================================================
+
+    w_under = (
+
+        0.03 +
+
+        1.80 *
+        highlight_mask +
+
+        0.25 *
+        q_under
+    )
+
+
+    # ========================================================
+    # NORMAL IMAGE WEIGHT
+    #
+    # THE MAIN ANCHOR
+    #
+    # Extra weight in medium tones preserves
+    # natural depth and prevents flattening.
+    # ========================================================
+
+    w_normal = (
+
+        3.20 +
+
+        1.20 *
+        q_normal +
+
+        2.20 *
+        medium_mask +
+
+        0.45 *
+        normal_detail
+    )
+
+
+    # Prevent normal exposure from becoming weak
+    w_normal = np.maximum(
+        w_normal,
+        1.50
+    )
+
+
+    # ========================================================
+    # OVEREXPOSED WEIGHT
+    #
+    # IMPORTANT:
+    #
+    # Only true shadows receive meaningful
+    # contribution from the overexposed image.
+    #
+    # Medium tones get almost zero extra
+    # overexposure contribution.
+    # ========================================================
+
+    w_over = (
+
+        0.01 +
+
+        1.20 *
+        shadow_recovery_mask +
+
+        0.10 *
+        q_over
+    )
+
+
+    # ========================================================
+    # HARD LIMIT OVER CONTRIBUTION
+    #
+    # This is another important protection
+    # against excessive shadow lifting.
+    # ========================================================
+
+    over_cap = (
+
+        0.18 +
+
+        1.35 *
+        deep_shadow_mask
+    )
+
+    w_over = np.minimum(
+        w_over,
+        over_cap
+    )
+
+
+    # ========================================================
+    # WEIGHT SMOOTHING
+    #
+    # Again:
+    # ONLY WEIGHTS ARE SMOOTHED.
+    # ========================================================
+
+    w_under = cv2.GaussianBlur(
+        w_under.astype(np.float32),
+        (0, 0),
+        12
+    )
+
+    w_normal = cv2.GaussianBlur(
+        w_normal.astype(np.float32),
+        (0, 0),
+        12
+    )
+
+    w_over = cv2.GaussianBlur(
+        w_over.astype(np.float32),
+        (0, 0),
+        12
+    )
+
+
+    # ========================================================
+    # PREVENT NEGATIVE WEIGHTS
+    # ========================================================
+
+    w_under = np.maximum(
+        w_under,
+        1e-6
+    )
+
+    w_normal = np.maximum(
+        w_normal,
+        1e-6
+    )
+
+    w_over = np.maximum(
+        w_over,
+        1e-6
+    )
+
+
+    # ========================================================
+    # NORMALIZE WEIGHTS
+    # ========================================================
+
+    weight_sum = (
+
+        w_under +
+        w_normal +
+        w_over +
+        1e-8
+    )
+
+    w_under = (
+        w_under /
+        weight_sum
+    )
+
+    w_normal = (
+        w_normal /
+        weight_sum
+    )
+
+    w_over = (
+        w_over /
+        weight_sum
+    )
+
+
+    # ========================================================
+    # FUSION
+    # ========================================================
+
+    fused = (
+
+        under *
+        w_under[:, :, None]
+
+        +
+
+        normal *
+        w_normal[:, :, None]
+
+        +
+
+        over *
+        w_over[:, :, None]
+    )
+
+
+    # ========================================================
+    # DEPTH-PRESERVING SHADOW CONTROL
+    #
+    # Instead of globally brightening shadows,
+    # we limit the difference from normal.
+    #
+    # This prevents:
+    # - Flat medium tones
+    # - Lost depth
+    # - Artificial shadow lifting
+    # ========================================================
+
+    difference = fused - normal
+
+
+    # Recovery allowed more in deep shadows,
+    # less as we approach medium tones.
+
+    max_shadow_change = (
+
+        0.16 *
+        deep_shadow_mask +
+
+        0.06 *
+        shadow_mask
+    )
+
+
+    difference = np.clip(
+        difference,
+        -max_shadow_change[:, :, None],
+        max_shadow_change[:, :, None]
+    )
+
+
+    controlled_fused = (
+        normal +
+        difference
+    )
+
+
+    # ========================================================
+    # PROTECT MEDIUM TONES EVEN MORE
+    #
+    # Pull medium tones back toward normal.
+    # This restores natural depth.
+    # ========================================================
+
+    fused = (
+
+        controlled_fused *
+        (
+            1.0 -
+            0.75 *
+            medium_mask[:, :, None]
+        )
+
+        +
+
+        normal *
+        (
+            0.75 *
+            medium_mask[:, :, None]
+        )
+    )
+
+
+    fused = np.clip(
+        fused,
+        0.0,
+        1.0
+    )
+
+
+    # ========================================================
+    # SAVE DIAGNOSTIC MAPS
+    # ========================================================
+
+    save_map(
+        os.path.join(
+            output_dir,
+            "01_highlight_mask.png"
+        ),
+        highlight_mask
+    )
+
+    save_map(
+        os.path.join(
+            output_dir,
+            "02_shadow_mask.png"
+        ),
+        shadow_mask
+    )
+
+    save_map(
+        os.path.join(
+            output_dir,
+            "03_deep_shadow_mask.png"
+        ),
+        deep_shadow_mask
+    )
+
+    save_map(
+        os.path.join(
+            output_dir,
+            "04_medium_protection_mask.png"
+        ),
+        medium_mask
+    )
+
+    save_map(
+        os.path.join(
+            output_dir,
+            "05_shadow_recovery_mask.png"
+        ),
+        shadow_recovery_mask
+    )
+
+    save_map(
+        os.path.join(
+            output_dir,
+            "06_weight_under.png"
+        ),
+        w_under
+    )
+
+    save_map(
+        os.path.join(
+            output_dir,
+            "07_weight_normal.png"
+        ),
+        w_normal
+    )
+
+    save_map(
+        os.path.join(
+            output_dir,
+            "08_weight_over.png"
+        ),
+        w_over
+    )
+
+
+    # ========================================================
+    # SAVE FINAL IMAGE
+    # ========================================================
+
+    fused_bgr = cv2.cvtColor(
+        np.uint8(
+            fused * 255.0
+        ),
+        cv2.COLOR_RGB2BGR
+    )
+
+
+    output_path = os.path.join(
+        output_dir,
+        "FINAL_ADAPTIVE_FUSION_V3_8.jpg"
+    )
+
+
+    cv2.imwrite(
+        output_path,
+        fused_bgr,
+        [
+            cv2.IMWRITE_JPEG_QUALITY,
+            100
+        ]
+    )
+
+
+    # ========================================================
+    # PRINT RESULTS
+    # ========================================================
+
+    print()
+    print("====================================")
+    print("ADAPTIVE HDR FUSION V3.8 COMPLETED")
+    print("====================================")
+    print()
+
+    print(
+        "Output:"
+    )
+
+    print(
+        output_path
+    )
+
+    print()
+
+    print(
+        "Mean fusion weights:"
+    )
+
+    print(
+        f"Under : {np.mean(w_under):.4f}"
+    )
+
+    print(
+        f"Normal: {np.mean(w_normal):.4f}"
+    )
+
+    print(
+        f"Over  : {np.mean(w_over):.4f}"
+    )
+
+    print()
+
+
+# ============================================================
+# RUN
+# ============================================================
+
+if __name__ == "__main__":
+    main()
+
+

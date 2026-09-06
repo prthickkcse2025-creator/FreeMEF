@@ -1,0 +1,478 @@
+# -*- coding: utf-8 -*-
+
+import numpy as np
+import scipy.signal as sig
+
+
+# ============================================================
+# 1D KERNEL
+# ============================================================
+
+def kernel_1D(i, a=0.6):
+
+    if i == 0:
+        return 0.25 + a
+
+    elif abs(i) == 1:
+        return 0.25
+
+    return 0.0
+
+
+# ============================================================
+# OLD KERNEL
+# ============================================================
+
+def kernel_old(i, j, a=0.6):
+
+    return (
+        kernel_1D(i, a)
+        *
+        kernel_1D(j, a)
+    )
+
+
+# ============================================================
+# KERNEL
+# ============================================================
+
+def get_kernel(a=0.6):
+
+    kernel = np.zeros(
+        (5, 5),
+        dtype=np.float32
+    )
+
+    for i in range(5):
+
+        for j in range(5):
+
+            kernel[i, j] = kernel_old(
+                i - 2,
+                j - 2,
+                a
+            )
+
+    return kernel
+
+
+# ============================================================
+# OLD REDUCE
+# ============================================================
+
+def Reduce_old(
+    image,
+    n,
+    a=0.6
+):
+
+    if n == 0:
+
+        return image
+
+    image = Reduce_old(
+        image,
+        n - 1,
+        a
+    )
+
+    R = image.shape[0]
+    C = image.shape[1]
+
+    image_extended = np.zeros(
+        (
+            R + 4,
+            C + 4
+        ),
+        dtype=np.float32
+    )
+
+    image_extended[
+        2:R + 2,
+        2:C + 2
+    ] = image
+
+    image_reduced = np.zeros(
+        (
+            R // 2,
+            C // 2
+        ),
+        dtype=np.float32
+    )
+
+    for i in range(
+        R // 2
+    ):
+
+        for j in range(
+            C // 2
+        ):
+
+            value = 0.0
+
+            for m in range(
+                -2,
+                3
+            ):
+
+                for n2 in range(
+                    -2,
+                    3
+                ):
+
+                    value += (
+                        kernel_old(
+                            m,
+                            n2,
+                            a
+                        )
+                        *
+                        image_extended[
+                            2 * i + m + 2,
+                            2 * j + n2 + 2
+                        ]
+                    )
+
+            image_reduced[
+                i,
+                j
+            ] = value
+
+    return image_reduced
+
+
+# ============================================================
+# WEIGHTED SUM
+# ============================================================
+
+def weighted_sum(
+    image,
+    i,
+    j,
+    a=0.6
+):
+
+    total = 0.0
+
+    for m in range(
+        -2,
+        3
+    ):
+
+        for n in range(
+            -2,
+            3
+        ):
+
+            pixel_i = (
+                i - m
+            ) / 2.0
+
+            pixel_j = (
+                j - n
+            ) / 2.0
+
+            if (
+                float(pixel_i).is_integer()
+                and
+                float(pixel_j).is_integer()
+            ):
+
+                pixel_i = int(
+                    pixel_i
+                )
+
+                pixel_j = int(
+                    pixel_j
+                )
+
+                if (
+                    0 <= pixel_i
+                    < image.shape[0]
+                    and
+                    0 <= pixel_j
+                    < image.shape[1]
+                ):
+
+                    total += (
+                        kernel_old(
+                            m,
+                            n,
+                            a
+                        )
+                        *
+                        image[
+                            pixel_i,
+                            pixel_j
+                        ]
+                    )
+
+    return 4.0 * total
+
+
+# ============================================================
+# OLD EXPAND
+# ============================================================
+
+def Expand_old(
+    image,
+    n,
+    a=0.6
+):
+
+    if n == 0:
+
+        return image
+
+    image = Expand_old(
+        image,
+        n - 1,
+        a
+    )
+
+    R, C = (
+        image.shape
+    )
+
+    image_extended = np.zeros(
+        (
+            R + 4,
+            C + 4
+        ),
+        dtype=np.float32
+    )
+
+    image_extended[
+        2:R + 2,
+        2:C + 2
+    ] = image
+
+    new_floor = np.zeros(
+        (
+            2 * R,
+            2 * C
+        ),
+        dtype=np.float32
+    )
+
+    for i in range(
+        2 * R
+    ):
+
+        for j in range(
+            2 * C
+        ):
+
+            new_floor[
+                i,
+                j
+            ] = weighted_sum(
+                image_extended,
+                i + 2,
+                j + 2,
+                a
+            )
+
+    minimum = np.min(
+        new_floor
+    )
+
+    maximum = np.max(
+        new_floor
+    )
+
+    new_floor -= minimum
+
+    if maximum > minimum:
+
+        new_floor /= (
+            maximum - minimum
+        )
+
+    return new_floor
+
+
+# ============================================================
+# MODERN REDUCE
+# ============================================================
+
+def Reduce1(
+    image,
+    a=0.6
+):
+
+    kernel = get_kernel(
+        a
+    )
+
+    shape = image.shape
+
+    if len(shape) == 3:
+
+        image_reduced = np.zeros(
+            (
+                shape[0] // 2,
+                shape[1] // 2,
+                3
+            ),
+            dtype=np.float32
+        )
+
+        for canal in range(3):
+
+            canal_reduced = (
+                sig.convolve2d(
+                    image[:, :, canal],
+                    kernel,
+                    mode="same"
+                )
+            )
+
+            image_reduced[
+                :,
+                :,
+                canal
+            ] = canal_reduced[
+                ::2,
+                ::2
+            ]
+
+        return image_reduced
+
+    return (
+        sig.convolve2d(
+            image,
+            kernel,
+            mode="same"
+        )[::2, ::2]
+    ).astype(
+        np.float32
+    )
+
+
+# ============================================================
+# REDUCE
+# ============================================================
+
+def Reduce(
+    image,
+    n,
+    a=0.6
+):
+
+    result = image
+
+    for _ in range(
+        int(n)
+    ):
+
+        result = Reduce1(
+            result,
+            a
+        )
+
+    return result
+
+
+# ============================================================
+# MODERN EXPAND
+# ============================================================
+
+def Expand1(
+    image,
+    a=0.6
+):
+
+    kernel = get_kernel(
+        a
+    )
+
+    shape = image.shape
+
+    if len(shape) == 3:
+
+        image_to_expand = np.zeros(
+            (
+                2 * shape[0],
+                2 * shape[1],
+                3
+            ),
+            dtype=np.float32
+        )
+
+        image_expanded = np.zeros_like(
+            image_to_expand
+        )
+
+        for canal in range(3):
+
+            image_to_expand[
+                ::2,
+                ::2,
+                canal
+            ] = image[
+                :,
+                :,
+                canal
+            ]
+
+            image_expanded[
+                :,
+                :,
+                canal
+            ] = sig.convolve2d(
+                image_to_expand[
+                    :,
+                    :,
+                    canal
+                ],
+                4.0 * kernel,
+                mode="same"
+            )
+
+        return image_expanded
+
+    image_to_expand = np.zeros(
+        (
+            2 * shape[0],
+            2 * shape[1]
+        ),
+        dtype=np.float32
+    )
+
+    image_to_expand[
+        ::2,
+        ::2
+    ] = image
+
+    return sig.convolve2d(
+        image_to_expand,
+        4.0 * kernel,
+        mode="same"
+    ).astype(
+        np.float32
+    )
+
+
+# ============================================================
+# EXPAND
+# ============================================================
+
+def Expand(
+    image,
+    n,
+    a=0.6
+):
+
+    result = image
+
+    for _ in range(
+        int(n)
+    ):
+
+        result = Expand1(
+            result,
+            a
+        )
+
+    return result
