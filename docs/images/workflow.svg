@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="720" viewBox="0 0 1400 720">
+  <rect width="1400" height="720" fill="#0f172a"/>
+  
+  <text x="700" y="55" text-anchor="middle"
+        font-family="Arial, sans-serif" font-size="32" font-weight="700"
+        fill="#ffffff">
+    FreeMEF — Client-Guided Multi-Exposure Fusion
+  </text>
+
+  <g font-family="Arial, sans-serif">
+
+    <rect x="70" y="120" width="250" height="110" rx="18" fill="#1e293b" stroke="#64748b" stroke-width="2"/>
+    <text x="195" y="160" text-anchor="middle" font-size="22" font-weight="700" fill="#ffffff">3 Exposure Inputs</text>
+    <text x="195" y="192" text-anchor="middle" font-size="17" fill="#cbd5e1">Under • Normal • Over</text>
+
+    <line x1="320" y1="175" x2="410" y2="175" stroke="#94a3b8" stroke-width="5"/>
+    <polygon points="410,175 395,166 395,184" fill="#94a3b8"/>
+
+    <rect x="410" y="100" width="280" height="150" rx="18" fill="#1e293b" stroke="#64748b" stroke-width="2"/>
+    <text x="550" y="140" text-anchor="middle" font-size="22" font-weight="700" fill="#ffffff">Generate Candidates</text>
+    <text x="550" y="175" text-anchor="middle" font-size="17" fill="#cbd5e1">A — V3.3 Client-Bright</text>
+    <text x="550" y="202" text-anchor="middle" font-size="17" fill="#cbd5e1">B — Mertens V3</text>
+    <text x="550" y="229" text-anchor="middle" font-size="17" fill="#cbd5e1">C — MEF-Net</text>
+
+    <line x1="690" y1="175" x2="780" y2="175" stroke="#94a3b8" stroke-width="5"/>
+    <polygon points="780,175 765,166 765,184" fill="#94a3b8"/>
+
+    <rect x="780" y="120" width="250" height="110" rx="18" fill="#1e293b" stroke="#64748b" stroke-width="2"/>
+    <text x="905" y="160" text-anchor="middle" font-size="22" font-weight="700" fill="#ffffff">Customer Choice</text>
+    <text x="905" y="192" text-anchor="middle" font-size="17" fill="#cbd5e1">Customer selects A / B / C</text>
+
+    <line x1="905" y1="230" x2="905" y2="310" stroke="#94a3b8" stroke-width="5"/>
+    <polygon points="905,310 896,295 914,295" fill="#94a3b8"/>
+
+    <rect x="745" y="310" width="320" height="120" rx="18" fill="#1e293b" stroke="#64748b" stroke-width="2"/>
+    <text x="905" y="350" text-anchor="middle" font-size="22" font-weight="700" fill="#ffffff">Natural-Language Feedback</text>
+    <text x="905" y="383" text-anchor="middle" font-size="17" fill="#cbd5e1">“Make it darker but preserve</text>
+    <text x="905" y="407" text-anchor="middle" font-size="17" fill="#cbd5e1">the window detail.”</text>
+
+    <line x1="745" y1="370" x2="580" y2="370" stroke="#94a3b8" stroke-width="5"/>
+    <polygon points="580,370 595,361 595,379" fill="#94a3b8"/>
+
+    <rect x="290" y="310" width="290" height="120" rx="18" fill="#1e293b" stroke="#64748b" stroke-width="2"/>
+    <text x="435" y="350" text-anchor="middle" font-size="22" font-weight="700" fill="#ffffff">Gemini Translator</text>
+    <text x="435" y="383" text-anchor="middle" font-size="17" fill="#cbd5e1">Feedback → Numeric Controls</text>
+    <text x="435" y="407" text-anchor="middle" font-size="15" fill="#94a3b8">Translation only — no image selection</text>
+
+    <line x1="435" y1="430" x2="435" y2="500" stroke="#94a3b8" stroke-width="5"/>
+    <polygon points="435,500 426,485 444,485" fill="#94a3b8"/>
+
+    <rect x="290" y="500" width="290" height="110" rx="18" fill="#1e293b" stroke="#64748b" stroke-width="2"/>
+    <text x="435" y="540" text-anchor="middle" font-size="22" font-weight="700" fill="#ffffff">Correction Engine</text>
+    <text x="435" y="573" text-anchor="middle" font-size="17" fill="#cbd5e1">Selected Candidate + References</text>
+
+    <line x1="580" y1="555" x2="745" y2="555" stroke="#94a3b8" stroke-width="5"/>
+    <polygon points="745,555 730,546 730,564" fill="#94a3b8"/>
+
+    <rect x="745" y="500" width="320" height="110" rx="18" fill="#1e293b" stroke="#64748b" stroke-width="2"/>
+    <text x="905" y="540" text-anchor="middle" font-size="22" font-weight="700" fill="#ffffff">Revision</text>
+    <text x="905" y="573" text-anchor="middle" font-size="17" fill="#cbd5e1">Review → Refine → Approve</text>
+
+    <path d="M1065 555 C1230 555 1230 350 1065 350"
+          fill="none" stroke="#94a3b8" stroke-width="4" stroke-dasharray="10 8"/>
+    <polygon points="1065,350 1080,341 1080,359" fill="#94a3b8"/>
+
+  </g>
+</svg>
