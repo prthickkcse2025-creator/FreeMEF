@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 
 import os
+from pathlib import Path
 import sys
 import json
 import subprocess
 from datetime import datetime
 
 import cv2
+import numpy as np
 import streamlit as st
 
 
@@ -338,6 +340,460 @@ def create_session():
 
 
 # ============================================================
+# SESSION PERSISTENCE
+# ============================================================
+
+SESSION_STATE_FILE = "session.json"
+
+
+def session_manifest_path(session_dir=None):
+    """
+    Return the persistent metadata file for the current session.
+    """
+
+    if session_dir is None:
+        session_dir = st.session_state.session_dir
+
+    if not session_dir:
+        return None
+
+    return os.path.join(
+        session_dir,
+        SESSION_STATE_FILE
+    )
+
+
+def serializable_session_state():
+    """
+    Build a JSON-safe snapshot of the workflow state.
+
+    Only workflow metadata is stored here. Image files themselves
+    remain as files in the session directory.
+    """
+
+    return {
+        "session_id":
+            st.session_state.session_id,
+
+        "under_path":
+            st.session_state.under_path,
+
+        "normal_path":
+            st.session_state.normal_path,
+
+        "over_path":
+            st.session_state.over_path,
+
+        "candidate_a":
+            st.session_state.candidate_a,
+
+        "candidate_b":
+            st.session_state.candidate_b,
+
+        "candidate_c":
+            st.session_state.candidate_c,
+
+        "selected_candidate":
+            st.session_state.selected_candidate,
+
+        "baseline_image":
+            st.session_state.baseline_image,
+
+        "current_image":
+            st.session_state.current_image,
+
+        "current_label":
+            st.session_state.current_label,
+
+        "revision_number":
+            st.session_state.revision_number,
+
+        "control_state":
+            dict(
+                st.session_state.control_state
+            ),
+
+        "approved":
+            st.session_state.approved,
+
+        "history":
+            list(
+                st.session_state.history
+            )
+    }
+
+
+def save_session_state():
+    """
+    Persist the current workflow state to session.json.
+
+    Writes atomically so an interrupted write is less likely to
+    leave a corrupted manifest.
+    """
+
+    session_dir = (
+        st.session_state.session_dir
+    )
+
+    if not session_dir:
+        return
+
+    os.makedirs(
+        session_dir,
+        exist_ok=True
+    )
+
+    manifest_path = session_manifest_path(
+        session_dir
+    )
+
+    temporary_path = (
+        manifest_path + ".tmp"
+    )
+
+    data = (
+        serializable_session_state()
+    )
+
+    with open(
+        temporary_path,
+        "w",
+        encoding="utf-8"
+    ) as f:
+
+        json.dump(
+            data,
+            f,
+            indent=2,
+            ensure_ascii=False
+        )
+
+        f.flush()
+        os.fsync(
+            f.fileno()
+        )
+
+    os.replace(
+        temporary_path,
+        manifest_path
+    )
+
+
+def load_session_state(
+    session_dir
+):
+    """
+    Load workflow metadata from session.json.
+
+    Returns True when a valid session manifest was loaded.
+    Returns False when the manifest is unavailable or invalid.
+    """
+
+    manifest_path = (
+        session_manifest_path(
+            session_dir
+        )
+    )
+
+    if (
+        not manifest_path
+        or not os.path.isfile(
+            manifest_path
+        )
+    ):
+        return False
+
+    try:
+
+        with open(
+            manifest_path,
+            "r",
+            encoding="utf-8"
+        ) as f:
+
+            data = json.load(
+                f
+            )
+
+        if not isinstance(
+            data,
+            dict
+        ):
+            return False
+
+        # Validate the session identity.
+        session_id = data.get(
+            "session_id"
+        )
+
+        if not session_id:
+            return False
+
+        # Validate the control structure.
+        control_keys = [
+            "brightness",
+            "shadow",
+            "highlight",
+            "depth",
+            "dehaze",
+            "contrast",
+            "saturation",
+            "color",
+            "blending"
+        ]
+
+        saved_controls = data.get(
+            "control_state",
+            {}
+        )
+
+        if not isinstance(
+            saved_controls,
+            dict
+        ):
+            return False
+
+        restored_controls = {}
+
+        for key in control_keys:
+
+            try:
+
+                value = float(
+                    saved_controls.get(
+                        key,
+                        0.0
+                    )
+                )
+
+            except (
+                TypeError,
+                ValueError
+            ):
+
+                return False
+
+            if not (
+                np.isfinite(
+                    value
+                )
+            ):
+                return False
+
+            if value < -1.0 or value > 1.0:
+                return False
+
+            restored_controls[key] = value
+
+        # Validate saved exposure paths.
+        saved_paths = {}
+
+        for key in [
+            "under_path",
+            "normal_path",
+            "over_path"
+        ]:
+
+            saved_path = data.get(key)
+
+            if not saved_path:
+                return False
+
+            try:
+                resolved_path = (
+                    Path(saved_path)
+                    .resolve()
+                )
+
+                resolved_session = (
+                    Path(session_dir)
+                    .resolve()
+                )
+
+                resolved_path.relative_to(
+                    resolved_session
+                )
+
+            except (
+                OSError,
+                ValueError,
+                TypeError
+            ):
+
+                return False
+
+            if not resolved_path.is_file():
+                return False
+
+            saved_paths[key] = str(
+                resolved_path
+            )
+
+        # Restore only after all validation succeeds.
+        st.session_state.session_id = (
+            session_id
+        )
+
+        st.session_state.under_path = (
+            saved_paths["under_path"]
+        )
+
+        st.session_state.normal_path = (
+            saved_paths["normal_path"]
+        )
+
+        st.session_state.over_path = (
+            saved_paths["over_path"]
+        )
+
+        st.session_state.session_dir = (
+            session_dir
+        )
+
+        # Validate and restore generated candidate paths.
+        candidate_paths = {}
+
+        for key in [
+            "candidate_a",
+            "candidate_b",
+            "candidate_c"
+        ]:
+
+            saved_path = data.get(key)
+
+            if not saved_path:
+                return False
+
+            try:
+                resolved_path = (
+                    Path(saved_path)
+                    .resolve()
+                )
+
+                resolved_session = (
+                    Path(session_dir)
+                    .resolve()
+                )
+
+                resolved_path.relative_to(
+                    resolved_session
+                )
+
+            except (
+                OSError,
+                ValueError,
+                TypeError
+            ):
+
+                return False
+
+            if not resolved_path.is_file():
+                return False
+
+            candidate_paths[key] = str(
+                resolved_path
+            )
+
+        st.session_state.candidate_a = (
+            candidate_paths["candidate_a"]
+        )
+
+        st.session_state.candidate_b = (
+            candidate_paths["candidate_b"]
+        )
+
+        st.session_state.candidate_c = (
+            candidate_paths["candidate_c"]
+        )
+
+        st.session_state.generation_done = True
+
+        st.session_state.selected_candidate = (
+            data.get(
+                "selected_candidate"
+            )
+        )
+
+        st.session_state.baseline_image = (
+            data.get(
+                "baseline_image"
+            )
+        )
+
+        st.session_state.current_image = (
+            data.get(
+                "current_image"
+            )
+        )
+
+        st.session_state.current_label = (
+            data.get(
+                "current_label"
+            )
+        )
+
+        try:
+
+            revision_number = int(
+                data.get(
+                    "revision_number",
+                    0
+                )
+            )
+
+        except (
+            TypeError,
+            ValueError
+        ):
+
+            return False
+
+        if revision_number < 0:
+            return False
+
+        st.session_state.revision_number = (
+            revision_number
+        )
+
+        st.session_state.control_state = (
+            restored_controls
+        )
+
+        st.session_state.approved = bool(
+            data.get(
+                "approved",
+                False
+            )
+        )
+
+        history = data.get(
+            "history",
+            []
+        )
+
+        if not isinstance(
+            history,
+            list
+        ):
+            return False
+
+        st.session_state.history = (
+            history
+        )
+
+        return True
+
+    except (
+        OSError,
+        json.JSONDecodeError,
+        TypeError,
+        ValueError
+    ):
+
+        return False
+
+
+# ============================================================
 # SAVE UPLOAD
 # ============================================================
 
@@ -597,10 +1053,13 @@ def reset_workflow():
         "generation_done",
 
         "selected_candidate",
+        "baseline_image",
         "current_image",
         "current_label",
 
         "revision_number",
+
+        "control_state",
 
         "approved",
 
@@ -632,6 +1091,99 @@ st.markdown(
     '</div>',
     unsafe_allow_html=True
 )
+
+
+# ============================================================
+# RECOVER PREVIOUS SESSION
+# ============================================================
+
+with st.expander(
+    "Recover Previous Session"
+):
+
+    recoverable_sessions = []
+
+    if os.path.isdir(
+        SESSION_ROOT
+    ):
+
+        for name in sorted(
+            os.listdir(SESSION_ROOT),
+            reverse=True
+        ):
+
+            session_dir = os.path.join(
+                SESSION_ROOT,
+                name
+            )
+
+            manifest = os.path.join(
+                session_dir,
+                SESSION_STATE_FILE
+            )
+
+            if (
+                os.path.isdir(session_dir)
+                and
+                os.path.isfile(manifest)
+            ):
+
+                recoverable_sessions.append(
+                    name
+                )
+
+    if not recoverable_sessions:
+
+        st.info(
+            "No recoverable sessions found."
+        )
+
+    else:
+
+        selected_session = st.selectbox(
+            "Select a saved session",
+            recoverable_sessions,
+            key="recovery_session"
+        )
+
+        if st.button(
+            "Recover Selected Session",
+            use_container_width=True
+        ):
+
+            recovery_dir = os.path.join(
+                SESSION_ROOT,
+                selected_session
+            )
+
+            if load_session_state(
+                recovery_dir
+            ):
+
+                for widget_key in [
+                    "under_file",
+                    "normal_file",
+                    "over_file",
+                    "customer_feedback"
+                ]:
+
+                    st.session_state.pop(
+                        widget_key,
+                        None
+                    )
+
+                st.success(
+                    f"Session {selected_session} recovered."
+                )
+
+                st.rerun()
+
+            else:
+
+                st.error(
+                    "This saved session is invalid or incomplete "
+                    "and could not be recovered."
+                )
 
 
 # ============================================================
@@ -838,6 +1390,8 @@ if ready:
 
             st.session_state.history = []
 
+            save_session_state()
+
             st.success(
                 "All three candidates generated."
             )
@@ -933,6 +1487,8 @@ if st.session_state.generation_done:
 
             st.session_state.approved = False
 
+            save_session_state()
+
             st.rerun()
 
 
@@ -1002,6 +1558,8 @@ if st.session_state.generation_done:
 
             st.session_state.approved = False
 
+            save_session_state()
+
             st.rerun()
 
 
@@ -1070,6 +1628,8 @@ if st.session_state.generation_done:
             st.session_state.history = []
 
             st.session_state.approved = False
+
+            save_session_state()
 
             st.rerun()
 
@@ -1368,6 +1928,8 @@ if st.session_state.selected_candidate:
                     record
                 )
 
+                save_session_state()
+
 
                 # --------------------------------------------
                 # RESULT
@@ -1472,6 +2034,8 @@ if st.session_state.selected_candidate:
         save_feedback_record(
             record
         )
+
+        save_session_state()
 
         st.rerun()
 
@@ -1727,6 +2291,8 @@ if st.session_state.history:
                 st.success(
                     f"Revision {revision} restored."
                 )
+
+                save_session_state()
 
                 st.rerun()
 
