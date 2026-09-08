@@ -160,20 +160,42 @@ st.markdown(
 # IMAGE PREVIEW / ZOOM HELPER
 # ============================================================
 
+@st.dialog(
+    "🔍 Image Viewer",
+    width="large"
+)
+def show_zoom_dialog(
+    image_path,
+    caption="Image"
+):
+    """Show the original image only when Zoom is clicked."""
+
+    if not image_path or not os.path.isfile(image_path):
+
+        st.error(
+            "The image could not be found."
+        )
+        return
+
+    st.image(
+        image_path,
+        caption=caption,
+        width="stretch"
+    )
+
+
 def show_image_preview(
     image_path,
     caption=None,
     key_prefix="image",
-    preview_width=650
+    preview_width=None,
+    center=True
 ):
     """
-    Show a compact screen-friendly preview.
+    Display a clean responsive preview.
 
-    The preview is intentionally limited in size so the complete
-    image can normally be viewed without vertical page scrolling.
-    The original image file is never resized or overwritten.
-
-    The user can explicitly open the larger viewer using Zoom.
+    The source file is never resized, cropped, or overwritten.
+    Only the browser presentation changes.
     """
 
     if not image_path or not os.path.isfile(image_path):
@@ -183,81 +205,43 @@ def show_image_preview(
         )
         return
 
-    preview_col = st.columns(
-        [1, 2, 1]
-    )[1]
+    if center:
 
-    with preview_col:
-
-        st.image(
-            image_path,
-            caption=caption,
-            width=preview_width
-        )
-
-    if st.button(
-        "🔍 Zoom",
-        key=f"{key_prefix}_zoom"
-    ):
-
-        st.session_state.zoom_image_path = image_path
-        st.session_state.zoom_image_caption = (
-            caption or "Image"
-        )
-
-        st.rerun()
-
-
-
-
-if "zoom_image_path" not in st.session_state:
-    st.session_state.zoom_image_path = None
-
-if "zoom_image_caption" not in st.session_state:
-    st.session_state.zoom_image_caption = None
-
-
-@st.dialog("🔍 Image Viewer", width="large")
-def show_zoom_dialog():
-
-    image_path = (
-        st.session_state.zoom_image_path
-    )
-
-    caption = (
-        st.session_state.zoom_image_caption
-    )
-
-    if (
-        image_path
-        and os.path.isfile(image_path)
-    ):
-
-        st.image(
-            image_path,
-            caption=caption,
-            width="stretch"
-        )
-
-        if st.button(
-            "Close",
-            key="close_zoom_dialog"
-        ):
-
-            st.session_state.zoom_image_path = None
-            st.session_state.zoom_image_caption = None
-            st.rerun()
+        preview_col = st.columns(
+            [1, 2, 1]
+        )[1]
 
     else:
 
-        st.error(
-            "The image could not be found."
+        preview_col = st.container()
+
+    with preview_col:
+
+        if preview_width is None:
+
+            st.image(
+                image_path,
+                caption=caption,
+                width="stretch"
+            )
+
+        else:
+
+            st.image(
+                image_path,
+                caption=caption,
+                width=preview_width
+            )
+
+        st.button(
+            "🔍 Zoom",
+            key=f"{key_prefix}_zoom",
+            on_click=show_zoom_dialog,
+            args=(
+                image_path,
+                caption or "Image"
+            )
         )
-
-
-if st.session_state.zoom_image_path:
-
-    show_zoom_dialog()
 
 
 
@@ -907,7 +891,8 @@ if st.session_state.generation_done:
             st.session_state.candidate_a,
             caption="Candidate A",
             key_prefix="candidate_a",
-            preview_width=360
+            preview_width=None,
+            center=False
         )
 
         if st.button(
@@ -975,7 +960,8 @@ if st.session_state.generation_done:
             st.session_state.candidate_b,
             caption="Candidate B",
             key_prefix="candidate_b",
-            preview_width=360
+            preview_width=None,
+            center=False
         )
 
         if st.button(
@@ -1043,7 +1029,8 @@ if st.session_state.generation_done:
             st.session_state.candidate_c,
             caption="Candidate C",
             key_prefix="candidate_c",
-            preview_width=360
+            preview_width=None,
+            center=False
         )
 
         if st.button(
@@ -1107,11 +1094,17 @@ if st.session_state.selected_candidate:
         unsafe_allow_html=True
     )
 
+    st.markdown(
+        "<div style=\"height:20px;\"></div>",
+        unsafe_allow_html=True
+    )
+
     show_image_preview(
         st.session_state.current_image,
         caption="Current result",
         key_prefix="current_result",
-        preview_width=360
+        preview_width=620,
+        center=True
     )
 
     feedback = st.text_area(
@@ -1384,10 +1377,12 @@ if st.session_state.selected_candidate:
                     f"Revision {revision} generated."
                 )
 
-                st.image(
+                show_image_preview(
                     result_path,
                     caption=f"Revision {revision}",
-                    use_container_width=True
+                    key_prefix=f"generated_revision_{revision}",
+                    preview_width=620,
+                    center=True
                 )
 
 
@@ -1500,7 +1495,8 @@ if st.session_state.approved:
         st.session_state.current_image,
         caption="Approved Final Image",
         key_prefix="approved_result",
-        preview_width=360
+        preview_width=620,
+        center=True
     )
 
     st.write(
@@ -1522,7 +1518,9 @@ if st.session_state.history:
         "4. Revision history"
     )
 
-    for item in st.session_state.history:
+    for history_index, item in enumerate(
+        st.session_state.history
+    ):
 
         revision = item.get(
             "revision",
@@ -1565,8 +1563,9 @@ if st.session_state.history:
             show_image_preview(
                 output_path,
                 caption=f"Revision {revision}",
-                key_prefix=f"revision_{revision}",
-                preview_width=360
+                key_prefix=f"revision_{revision}_{history_index}",
+                preview_width=620,
+                center=True
             )
 
         else:
@@ -1764,7 +1763,8 @@ if st.session_state.approved:
         st.session_state.current_image,
         caption="Approved Final Image",
         key_prefix="approved_final",
-        preview_width=360
+        preview_width=620,
+        center=True
     )
 
     final_path = st.session_state.current_image
