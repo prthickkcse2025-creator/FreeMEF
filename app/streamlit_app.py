@@ -920,11 +920,25 @@ def generate_candidate_a():
         output
     ]
 
-    log = run_command(
-        command
-    )
+    try:
+        st.info("Candidate A: starting V3.3 subprocess...")
+        log = run_command(command)
+        st.info("Candidate A: subprocess finished successfully.")
 
-    return output, log
+        if not os.path.exists(output):
+            raise RuntimeError(
+                "Candidate A process finished, but output file was not created."
+            )
+
+        st.info(
+            f"Candidate A: output created ({os.path.getsize(output) / (1024 * 1024):.2f} MB)"
+        )
+
+        return output, log
+
+    except Exception as exc:
+        st.error(f"Candidate A failed: {type(exc).__name__}: {exc}")
+        raise
 
 
 # ============================================================
