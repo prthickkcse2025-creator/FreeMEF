@@ -905,6 +905,7 @@ def generate_candidate_a():
 
     command = [
         sys.executable,
+	"-u",
         V33_SCRIPT,
 
         "--under",
