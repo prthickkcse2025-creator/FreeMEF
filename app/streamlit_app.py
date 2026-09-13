@@ -11,6 +11,30 @@ import cv2
 import numpy as np
 import streamlit as st
 
+import platform
+import psutil
+
+st.sidebar.write("### Runtime Diagnostics")
+st.sidebar.write("Python:", sys.version)
+st.sidebar.write("Platform:", platform.platform())
+st.sidebar.write("CPU cores:", os.cpu_count())
+st.sidebar.write(
+    "RAM:",
+    f"{psutil.virtual_memory().total / (1024**3):.2f} GB"
+)
+
+try:
+    import torch
+    st.sidebar.write("PyTorch:", torch.__version__)
+    st.sidebar.write("CUDA available:", torch.cuda.is_available())
+
+    if torch.cuda.is_available():
+        st.sidebar.write("GPU:", torch.cuda.get_device_name(0))
+except Exception as e:
+    st.sidebar.write("Torch diagnostic error:", str(e))
+
+
+
 
 # ============================================================
 # PROJECT PATHS
