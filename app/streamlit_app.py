@@ -877,16 +877,19 @@ def run_command(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True
+        text=True,
+        timeout=600
     )
+
+    output = result.stdout or ""
 
     if result.returncode != 0:
 
         raise RuntimeError(
-            result.stdout
+            f"Command failed with exit code {result.returncode}\\n\\n{output}"
         )
 
-    return result.stdout
+    return output
 
 
 # ============================================================
